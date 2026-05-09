@@ -290,21 +290,61 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
 
     f = f.sort_values(sort_by, ascending=(sort_dir == "asc"), na_position="last").reset_index(drop=True)
 
+    # ----- diagnostics: what data did we actually get? ---------------------
+    n_loaded = len(df)
+    n_with_mc = df["market_cap"].notna().sum()
+    n_with_roe = df["roe"].notna().sum()
+    n_with_roa = df["roa"].notna().sum()
+    n_under_cap = (df["market_cap"].fillna(1e18) / 1e6 <= mc_max).sum()
+
     if len(f) == 0:
         st.warning(
-            "No banks match your current filters. Try loosening: "
-            "raise the max market cap, lower the min ROE/ROA, or pick more segments."
+            f"**Zero banks meet ALL of your current filters** (Mkt cap ≤ ${mc_max:.0f}M, "
+            f"ROE ≥ {roe_min:.1f}%, ROA ≥ {roa_min:.1f}%). Showing the full loaded "
+            f"universe below — banks meeting your criteria would be highlighted in green."
+        )
+        st.caption(
+            f"📊 Loaded data for **{n_loaded}** of {len(universe_tickers)} requested. "
+            f"Of those: **{n_with_mc}** have market-cap data, **{n_with_roe}** have ROE, "
+            f"**{n_with_roa}** have ROA, **{n_under_cap}** are under your ${mc_max:.0f}M cap."
+        )
+        st.markdown(
+            "**Try:** ① raise max market cap to $300M+ · ② lower ROA to 0.5% · "
+            "③ lower ROE to 10% · ④ add the **Small Community** segment in the sidebar."
         )
     else:
-        st.markdown(f"### Results — **{len(f)}** of {total} banks match")
+        st.success(
+            f"✅ **{len(f)} of {n_loaded}** loaded banks meet ALL your criteria "
+            f"(Mkt cap ≤ ${mc_max:.0f}M, ROE ≥ {roe_min:.1f}%, ROA ≥ {roa_min:.1f}%)."
+        )
 
-    # ----- main table (PRIMARY UI) -----------------------------------------
-    # Show market cap in millions for readability with community banks.
-    f_view = f.copy()
+    # ----- decide what to display ------------------------------------------
+    # If filters return matches, show those. Otherwise show all loaded banks
+    # so the user can see the actual data and decide how to loosen.
+    if len(f) == 0:
+        f_view = df.copy().sort_values(sort_by, ascending=(sort_dir == "asc"), na_position="last")
+    else:
+        f_view = f.copy()
+
     if "market_cap" in f_view.columns:
         f_view["market_cap_m"] = f_view["market_cap"] / 1e6
 
+    # Tag rows that meet the user's criteria (used for "matches" column).
+    def _meets(row) -> bool:
+        if pd.isna(row.get("market_cap")) or row["market_cap"] / 1e6 > mc_max:
+            return False
+        if pd.isna(row.get("roe")) or row["roe"] < roe_min / 100:
+            return False
+        if pd.isna(row.get("roa")) or row["roa"] < roa_min / 100:
+            return False
+        if dy_min > 0 and (pd.isna(row.get("dividend_yield")) or row["dividend_yield"] < dy_min / 100):
+            return False
+        return True
+
+    f_view["matches"] = f_view.apply(_meets, axis=1)
+
     display_cols = {
+        "matches": "✅",
         "ticker": "Ticker",
         "company_name": "Company",
         "segment": "Segment",
@@ -325,12 +365,29 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
     keep = [c for c in display_cols if c in f_view.columns]
     f_disp = f_view[keep].rename(columns={c: display_cols[c] for c in keep})
 
+    # Sort matches to the top.
+    if "✅" in f_disp.columns:
+        f_disp = f_disp.sort_values(
+            ["✅", display_cols.get(sort_by, "ROE")],
+            ascending=[False, sort_dir == "asc"],
+            na_position="last",
+        ).reset_index(drop=True)
+
+    # Color rows that meet criteria.
+    def _row_style(row):
+        if row.get("✅"):
+            return ["background-color: #dcfce7"] * len(row)
+        return [""] * len(row)
+
+    styled = f_disp.style.apply(_row_style, axis=1)
+
     st.dataframe(
-        f_disp,
+        styled,
         use_container_width=True,
         hide_index=True,
         height=min(900, 60 + 36 * max(len(f_disp), 1)),
         column_config={
+            "✅": st.column_config.CheckboxColumn("✓", help="Meets all filter criteria", width="small"),
             "Mkt cap ($M)": st.column_config.NumberColumn(format="$%.1fM"),
             "Price": st.column_config.NumberColumn(format="$%.2f"),
             "P/E (TTM)": st.column_config.NumberColumn(format="%.1f"),

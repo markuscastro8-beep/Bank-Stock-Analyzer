@@ -78,12 +78,20 @@ def _row_from_result(result: AnalysisResult, segment: Optional[str]) -> Screener
     ma200 = tech.ma_values.get(200)
     above_ma200 = (last_close > ma200) if (last_close is not None and ma200 is not None) else None
 
+    # Market cap fallback: Yahoo metadata is sparse for thinly-traded micro-caps.
+    # If Yahoo didn't return marketCap, derive it from SEC's most recent
+    # end-of-period shares outstanding × last close. Less timely but accurate
+    # within ~1 reporting cycle, and far better than dropping the row entirely.
+    market_cap = info.get("marketCap")
+    if market_cap is None and last_close is not None and latest is not None and latest.shares_eop:
+        market_cap = float(last_close) * float(latest.shares_eop)
+
     return ScreenerRow(
         ticker=result.ticker,
         company_name=result.company_name,
         segment=segment,
         last_close=last_close,
-        market_cap=info.get("marketCap"),
+        market_cap=market_cap,
         ttm_eps=fund.ttm_eps,
         pe_ttm=pe_ttm,
         pb=pb,
