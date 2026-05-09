@@ -1,0 +1,29 @@
+# Bank Stock Analyzer — runtime config
+# Anything here is overridable via environment variables (see .env.example).
+
+# REQUIRED by SEC EDGAR — identify yourself.
+sec_user_agent: "BankStockAnalyzer/0.1 markuscastro8@gmail.com"
+
+# Local working dirs (relative paths are resolved against the project root).
+cache_dir: ./.cache
+output_dir: ./output
+log_dir: ./logs
+log_level: INFO
+
+# SEC asks for <= 10 req/s; we stay below that. Yahoo limit is mostly self-imposed.
+sec_rate_limit_per_sec: 8.0
+yahoo_rate_limit_per_sec: 4.0
+request_timeout_sec: 20
+max_retries: 4
+backoff_base_sec: 1.5
+
+# Analysis defaults.
+price_history_years: 5
+moving_averages: [20, 50, 200, 252]   # 252 ≈ 1 trading year, useful long-trend MA
+fiscal_years: 3
+
+# Default peer groups (used by the CLI's --peers helper if you reference by name).
+peer_groups:
+  big_us_banks: ["JPM", "BAC", "WFC", "C", "USB", "PNC", "TFC"]
+  super_regionals: ["USB", "PNC", "TFC", "FITB", "RF", "MTB"]
+  trust_and_custody: ["BK", "STT", "NTRS"]

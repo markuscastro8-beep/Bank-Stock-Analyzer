@@ -1,0 +1,15 @@
+# Streamlit theme + server defaults.
+# Applies both locally and when deployed to Streamlit Community Cloud.
+
+[theme]
+primaryColor = "#1e40af"          # bank blue
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+font = "sans serif"
+
+[server]
+headless = false                  # ignored on cloud; auto-opens browser locally
+
+[browser]
+gatherUsageStats = false
