@@ -257,7 +257,8 @@ with tab_history:
         title=f"{result.ticker} — {result.company_name} (5y)",
         moving_averages=(20, 50, 200, 252),
     )
-    fig.update_layout(template=f"plotly_{chart_theme}")
+    plotly_template = "plotly_dark" if chart_theme == "dark" else "plotly_white"
+    fig.update_layout(template=plotly_template)
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("Latest moving-average values"):
