@@ -259,19 +259,23 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
         sort_by = st.selectbox(
             "Sort by",
             options=[
+                "market_cap",
                 "roe",
                 "roa",
-                "market_cap",
                 "p_tbv",
                 "pe_ttm",
                 "eps_growth_yoy",
                 "dividend_yield",
                 "pct_off_high_52w",
             ],
-            index=0,
+            index=0,                  # default: market cap
         )
     with fcols2[3]:
-        sort_dir = st.selectbox("Sort direction", options=["desc", "asc"], index=0)
+        sort_dir = st.selectbox(
+            "Sort direction",
+            options=["asc", "desc"],
+            index=0,                  # default: ascending → smallest first
+        )
 
     # Apply filters --------------------------------------------------------
     f = df.copy()
@@ -300,8 +304,8 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
     if len(f) == 0:
         st.warning(
             f"**Zero banks meet ALL of your current filters** (Mkt cap ≤ ${mc_max:.0f}M, "
-            f"ROE ≥ {roe_min:.1f}%, ROA ≥ {roa_min:.1f}%). Showing the full loaded "
-            f"universe below — banks meeting your criteria would be highlighted in green."
+            f"ROE ≥ {roe_min:.1f}%, ROA ≥ {roa_min:.1f}%). Full loaded universe shown "
+            f"below, sorted smallest market cap first. **Rows highlighted green = ROE > 12%.**"
         )
         st.caption(
             f"📊 Loaded data for **{n_loaded}** of {len(universe_tickers)} requested. "
@@ -315,7 +319,8 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
     else:
         st.success(
             f"✅ **{len(f)} of {n_loaded}** loaded banks meet ALL your criteria "
-            f"(Mkt cap ≤ ${mc_max:.0f}M, ROE ≥ {roe_min:.1f}%, ROA ≥ {roa_min:.1f}%)."
+            f"(Mkt cap ≤ ${mc_max:.0f}M, ROE ≥ {roe_min:.1f}%, ROA ≥ {roa_min:.1f}%). "
+            f"Sorted smallest market cap first. **Rows highlighted green = ROE > 12%.**"
         )
 
     # ----- decide what to display ------------------------------------------
@@ -329,19 +334,10 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
     if "market_cap" in f_view.columns:
         f_view["market_cap_m"] = f_view["market_cap"] / 1e6
 
-    # Tag rows that meet the user's criteria (used for "matches" column).
-    def _meets(row) -> bool:
-        if pd.isna(row.get("market_cap")) or row["market_cap"] / 1e6 > mc_max:
-            return False
-        if pd.isna(row.get("roe")) or row["roe"] < roe_min / 100:
-            return False
-        if pd.isna(row.get("roa")) or row["roa"] < roa_min / 100:
-            return False
-        if dy_min > 0 and (pd.isna(row.get("dividend_yield")) or row["dividend_yield"] < dy_min / 100):
-            return False
-        return True
-
-    f_view["matches"] = f_view.apply(_meets, axis=1)
+    # Highlight: ROE > 12% (the user's quality bar). Independent of slider
+    # values so the visual cue is always meaningful.
+    ROE_GREEN_THRESHOLD = 0.12
+    f_view["matches"] = f_view["roe"].fillna(-1) > ROE_GREEN_THRESHOLD
 
     display_cols = {
         "matches": "✅",
@@ -365,11 +361,12 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
     keep = [c for c in display_cols if c in f_view.columns]
     f_disp = f_view[keep].rename(columns={c: display_cols[c] for c in keep})
 
-    # Sort matches to the top.
-    if "✅" in f_disp.columns:
+    # Sort honors the user's selection (default: market cap ascending).
+    sort_col = display_cols.get(sort_by, "Mkt cap ($M)")
+    if sort_col in f_disp.columns:
         f_disp = f_disp.sort_values(
-            ["✅", display_cols.get(sort_by, "ROE")],
-            ascending=[False, sort_dir == "asc"],
+            sort_col,
+            ascending=(sort_dir == "asc"),
             na_position="last",
         ).reset_index(drop=True)
 
@@ -387,7 +384,7 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
         hide_index=True,
         height=min(900, 60 + 36 * max(len(f_disp), 1)),
         column_config={
-            "✅": st.column_config.CheckboxColumn("✓", help="Meets all filter criteria", width="small"),
+            "✅": st.column_config.CheckboxColumn("ROE>12%", help="ROE exceeds 12%", width="small"),
             "Mkt cap ($M)": st.column_config.NumberColumn(format="$%.1fM"),
             "Price": st.column_config.NumberColumn(format="$%.2f"),
             "P/E (TTM)": st.column_config.NumberColumn(format="%.1f"),
