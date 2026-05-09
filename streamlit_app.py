@@ -118,8 +118,11 @@ with st.sidebar:
         chosen_segments = st.multiselect(
             "Segments",
             options=SEGMENTS,
-            default=SEGMENTS,
-            help="Limit which bank business models are screened.",
+            default=["Nano-Cap Community"],
+            help=(
+                "Default = Nano-Cap Community (typically <$200M market cap, "
+                "many <$100M). Add 'Small Community' or other segments to widen."
+            ),
         )
 
         st.markdown("### Refresh")
@@ -198,36 +201,39 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
 
     # ----- filter controls --------------------------------------------------
     st.markdown("### Filters")
+    st.caption(
+        "Defaults are pre-set to community-bank quality screen: "
+        "**market cap < $150M · ROE ≥ 12% · ROA ≥ 0.9%**. "
+        "Adjust the sliders to widen or tighten the screen."
+    )
     fcols = st.columns(4)
 
     with fcols[0]:
-        mc_min, mc_max = (
-            float(df["market_cap"].min(skipna=True) or 0) / 1e9,
-            float(df["market_cap"].max(skipna=True) or 0) / 1e9,
-        )
-        mc_range = st.slider(
-            "Market cap (USD billions)",
+        mc_max_universe = float(df["market_cap"].max(skipna=True) or 0) / 1e6
+        mc_max_slider = max(mc_max_universe, 5000.0)
+        mc_max = st.slider(
+            "Max market cap (USD millions)",
             min_value=0.0,
-            max_value=max(mc_max, 1.0),
-            value=(0.0, max(mc_max, 1.0)),
-            step=1.0,
+            max_value=mc_max_slider,
+            value=150.0,                 # ← user requirement
+            step=10.0,
+            help="Default 150 = under $150M (true community / micro-cap range).",
         )
     with fcols[1]:
-        ptbv_max_default = float(np.nanpercentile(df["p_tbv"], 95)) if df["p_tbv"].notna().any() else 5.0
-        ptbv_range = st.slider(
-            "P/TBV",
-            min_value=0.0,
-            max_value=max(ptbv_max_default, 1.0) + 1.0,
-            value=(0.0, max(ptbv_max_default, 1.0) + 1.0),
-            step=0.1,
-        )
-    with fcols[2]:
         roe_min = st.slider(
             "Min ROE (%)",
             min_value=-20.0,
             max_value=40.0,
-            value=0.0,
+            value=12.0,                  # ← user requirement
             step=0.5,
+        )
+    with fcols[2]:
+        roa_min = st.slider(
+            "Min ROA (%)",
+            min_value=-2.0,
+            max_value=5.0,
+            value=0.9,                   # ← user requirement
+            step=0.1,
         )
     with fcols[3]:
         dy_min = st.slider(
@@ -240,18 +246,24 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
 
     fcols2 = st.columns(4)
     with fcols2[0]:
-        require_pos_eps = st.checkbox("EPS growth YoY > 0", value=False)
+        ptbv_max = st.slider(
+            "Max P/TBV",
+            min_value=0.0,
+            max_value=10.0,
+            value=10.0,
+            step=0.1,
+        )
     with fcols2[1]:
-        require_above_ma200 = st.checkbox("Above 200-day MA", value=False)
+        require_pos_eps = st.checkbox("EPS growth YoY > 0", value=False)
     with fcols2[2]:
         sort_by = st.selectbox(
             "Sort by",
             options=[
+                "roe",
+                "roa",
                 "market_cap",
                 "p_tbv",
                 "pe_ttm",
-                "roe",
-                "roa",
                 "eps_growth_yoy",
                 "dividend_yield",
                 "pct_off_high_52w",
@@ -263,54 +275,63 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
 
     # Apply filters --------------------------------------------------------
     f = df.copy()
-    f = f[
-        (f["market_cap"].fillna(0) / 1e9 >= mc_range[0])
-        & (f["market_cap"].fillna(0) / 1e9 <= mc_range[1])
-    ]
-    f = f[
-        (f["p_tbv"].isna() | ((f["p_tbv"] >= ptbv_range[0]) & (f["p_tbv"] <= ptbv_range[1])))
-    ]
+    # Market cap filter: rows missing market cap are excluded (we can't verify).
+    f = f[f["market_cap"].notna() & (f["market_cap"] / 1e6 <= mc_max)]
     if roe_min > -20:
         f = f[f["roe"].fillna(-1) >= roe_min / 100]
+    if roa_min > -2:
+        f = f[f["roa"].fillna(-1) >= roa_min / 100]
     if dy_min > 0:
         f = f[f["dividend_yield"].fillna(0) >= dy_min / 100]
+    if ptbv_max < 10:
+        f = f[f["p_tbv"].isna() | (f["p_tbv"] <= ptbv_max)]
     if require_pos_eps:
         f = f[f["eps_growth_yoy"].fillna(-1) > 0]
-    if require_above_ma200:
-        f = f[f["above_ma200"] == True]  # noqa: E712
 
     f = f.sort_values(sort_by, ascending=(sort_dir == "asc"), na_position="last").reset_index(drop=True)
 
-    st.markdown(f"### Results — **{len(f)}** of {total} banks match")
+    if len(f) == 0:
+        st.warning(
+            "No banks match your current filters. Try loosening: "
+            "raise the max market cap, lower the min ROE/ROA, or pick more segments."
+        )
+    else:
+        st.markdown(f"### Results — **{len(f)}** of {total} banks match")
 
-    # ----- main table -------------------------------------------------------
+    # ----- main table (PRIMARY UI) -----------------------------------------
+    # Show market cap in millions for readability with community banks.
+    f_view = f.copy()
+    if "market_cap" in f_view.columns:
+        f_view["market_cap_m"] = f_view["market_cap"] / 1e6
+
     display_cols = {
         "ticker": "Ticker",
         "company_name": "Company",
         "segment": "Segment",
-        "market_cap": "Mkt cap",
+        "market_cap_m": "Mkt cap ($M)",
         "last_close": "Price",
-        "pe_ttm": "P/E (TTM)",
-        "pb": "P/B",
-        "p_tbv": "P/TBV",
         "roe": "ROE",
         "roa": "ROA",
+        "p_tbv": "P/TBV",
+        "pb": "P/B",
+        "pe_ttm": "P/E (TTM)",
         "eps_growth_yoy": "EPS YoY",
         "dividend_yield": "Div yield",
         "ttm_eps": "TTM EPS",
         "tbv_per_share": "TBV/sh",
         "pct_off_high_52w": "% off 52w high",
         "above_ma200": "> MA200",
-        "cet1_ratio": "CET1 %",
     }
-    f_disp = f[list(display_cols.keys())].rename(columns=display_cols)
+    keep = [c for c in display_cols if c in f_view.columns]
+    f_disp = f_view[keep].rename(columns={c: display_cols[c] for c in keep})
 
     st.dataframe(
         f_disp,
         use_container_width=True,
         hide_index=True,
+        height=min(900, 60 + 36 * max(len(f_disp), 1)),
         column_config={
-            "Mkt cap": st.column_config.NumberColumn(format="$%.0f", help="USD"),
+            "Mkt cap ($M)": st.column_config.NumberColumn(format="$%.1fM"),
             "Price": st.column_config.NumberColumn(format="$%.2f"),
             "P/E (TTM)": st.column_config.NumberColumn(format="%.1f"),
             "P/B": st.column_config.NumberColumn(format="%.2f"),
@@ -323,8 +344,16 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
             "TBV/sh": st.column_config.NumberColumn(format="$%.2f"),
             "% off 52w high": st.column_config.NumberColumn(format="%.1f%%"),
             "> MA200": st.column_config.CheckboxColumn(),
-            "CET1 %": st.column_config.NumberColumn(format="%.2f"),
         },
+    )
+
+    # CSV download for the matched rows
+    st.download_button(
+        "⬇ Download matched banks as CSV",
+        data=f_disp.to_csv(index=False).encode("utf-8"),
+        file_name="matched_banks.csv",
+        mime="text/csv",
+        use_container_width=False,
     )
 
     # Drill-down picker
@@ -344,8 +373,9 @@ def render_screener(chosen_segments: list[str], chart_theme: str) -> None:
 
     st.divider()
 
-    # ----- visualization tabs ----------------------------------------------
-    vt1, vt2, vt3 = st.tabs(["🟦 Scatter: ROE vs P/TBV", "📊 Bar charts", "🖼 Mini charts"])
+    # ----- visualization (collapsed by default — table is the primary UI) -----
+    with st.expander("📊 Charts (scatter, bar, mini-charts)", expanded=False):
+        vt1, vt2, vt3 = st.tabs(["🟦 Scatter: ROE vs P/TBV", "📊 Bar charts", "🖼 Mini charts"])
 
     with vt1:
         st.caption(
