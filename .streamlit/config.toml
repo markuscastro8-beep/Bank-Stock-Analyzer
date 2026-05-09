@@ -9,7 +9,8 @@ textColor = "#0f172a"
 font = "sans serif"
 
 [server]
-headless = false                  # ignored on cloud; auto-opens browser locally
+headless = true                   # required on Streamlit Cloud (no stdin/browser)
+                                  # the run-dashboard.bat overrides this locally
 
 [browser]
 gatherUsageStats = false
