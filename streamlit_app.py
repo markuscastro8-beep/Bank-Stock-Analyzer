@@ -6,6 +6,12 @@ from __future__ import annotations
 
 import os
 
+# Headless matplotlib backend — required on Streamlit Cloud (no display server).
+# Must be set BEFORE any matplotlib/mplfinance import.
+os.environ.setdefault("MPLBACKEND", "Agg")
+import matplotlib
+matplotlib.use("Agg")
+
 import streamlit as st
 import streamlit.components.v1 as components
 
